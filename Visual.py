@@ -114,10 +114,9 @@ def plot_frame(ax, players, title, show_yards=False):
     ax.grid(True, linestyle='--', alpha=0.3)
 
 
-# Create side-by-side plots: start and end of play
-fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-plot_frame(axes[0], start_frame_players, 'Start of Play', show_yards=False)
-plot_frame(axes[1], end_frame_players, 'End of Play (Tackle)', show_yards=True)
+# Create a single plot for the end of play (tackle)
+fig, ax = plt.subplots(1, 1, figsize=(12, 7))
+plot_frame(ax, end_frame_players, 'End of Play (Tackle)', show_yards=True)
 
 # Legend (use team abbreviations)
 legend_elements = [
@@ -127,7 +126,6 @@ legend_elements = [
     mpatches.Patch(color='lightblue', alpha=0.3, label='End Zone'),
     mpatches.Patch(color='#d0f5d8', alpha=1, label='Field (Grass)')
 ]
-fig.legend(handles=legend_elements, loc='upper center', ncol=5, bbox_to_anchor=(0.5, 0.98))
-plt.subplots_adjust(top=0.88)
+ax.legend(handles=legend_elements, loc='upper right')
 plt.tight_layout()
 plt.show()
