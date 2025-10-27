@@ -7,16 +7,63 @@ from matplotlib.patches import FancyBboxPatch
 # Load the CSV with low_memory=False to handle mixed types
 df = pd.read_csv('train.csv', low_memory=False)
 
-# Choose a specific play by taking the first row's play (you can change this selection)
-frame = df.iloc[0]
+def get_unique_games():
+    """Get a list of all unique games in the dataset"""
+    unique_games = df[['GameId', 'HomeTeamAbbr', 'VisitorTeamAbbr']].drop_duplicates()
+    return unique_games.sort_values('GameId')
+
+def select_game(game_number=None):
+    """Select a game by its index number (1-based) in the sorted unique games list"""
+    unique_games = get_unique_games()
+    total_games = len(unique_games)
+    
+    if game_number is None:
+        # List all available games
+        print("\nAvailable games:")
+        for idx, (_, row) in enumerate(unique_games.iterrows(), 1):
+            print(f"{idx}. Game ID: {row['GameId']} - {row['VisitorTeamAbbr']} @ {row['HomeTeamAbbr']}")
+        game_number = int(input(f"\nEnter game number (1-{total_games}): "))
+    
+    # Validate input
+    if not 1 <= game_number <= total_games:
+        raise ValueError(f"Game number must be between 1 and {total_games}")
+    
+    # Get the selected game
+    selected_game = unique_games.iloc[game_number - 1]
+    game_id = selected_game['GameId']
+    
+    # Get the first play of this game
+    frame = df[df['GameId'] == game_id].iloc[0]
+    return frame
+
+# Choose a specific game by taking user input
+frame = select_game()
 game_id = frame['GameId']
-play_id = frame['PlayId']
 
-# All rows for this play
-play_rows = df[(df['GameId'] == game_id) & (df['PlayId'] == play_id)].copy()
+# Get all running plays for this game
+game_plays = df[df['GameId'] == game_id].copy()
+unique_plays = game_plays[['PlayId', 'NflIdRusher', 'Yards']].drop_duplicates()
+total_plays = len(unique_plays)
+print(f"\nFound {total_plays} plays in this game.")
 
-# Convert TimeSnap to datetime for ordering
-play_rows['TimeSnap_dt'] = pd.to_datetime(play_rows['TimeSnap'], errors='coerce')
+# Process each play in the game
+for play_idx, (_, play_info) in enumerate(unique_plays.iterrows(), 1):
+    play_id = play_info['PlayId']
+    
+    # Get all player positions for this play
+    play_rows = game_plays[game_plays['PlayId'] == play_id].copy()
+    
+    # Convert TimeSnap to datetime for ordering
+    play_rows['TimeSnap_dt'] = pd.to_datetime(play_rows['TimeSnap'], errors='coerce')
+    
+    # Get rusher's name
+    rusher_info = play_rows[play_rows['NflId'] == play_info['NflIdRusher']].iloc[0]
+    rusher_name = rusher_info['DisplayName']
+    yards_gained = play_info['Yards']
+    
+    print(f"\nPlay {play_idx}/{total_plays}")
+    print(f"Rusher: {rusher_name}")
+    print(f"Yards gained: {yards_gained}")
 
 # Attempt to find rusher's frames (most accurate for end of play)
 rusher_id = frame.get('NflIdRusher', None)
@@ -60,15 +107,27 @@ def plot_frame(ax, players, title, show_yards=False):
     ax.axvspan(100, 110, color='lightblue', alpha=0.3)
 
     # Plot players
+    # Get the actual rusher's ID for this play
+    rusher_id = players['NflIdRusher'].iloc[0] if len(players) > 0 else None
+    
     for _, row in players.iterrows():
         # Resolve player's team abbreviation (row['Team'] is 'home' or 'away')
         player_abbr = team_abbr_by_side.get(row['Team'], row['Team'])
         color = team_color_by_abbr.get(player_abbr, 'gray')
-        if row.get('Position') == 'RB':
+        
+        # Only mark as RB if this player is the actual rusher
+        is_rusher = row['NflId'] == rusher_id
+        if is_rusher:
             ax.scatter(row['X'], row['Y'], marker='D', color='#4fc3f7', s=140, edgecolor='black', zorder=4)
+            # Print rusher info for debugging
+            print(f"\nRusher Info: {row['DisplayName']} (ID: {row['NflId']}, Position: {row['Position']})")
         else:
             ax.scatter(row['X'], row['Y'], marker='o', color=color, s=80, edgecolor='black', zorder=3)
-        ax.text(row['X'] + 0.5, row['Y'] + 0.5, row['DisplayName'], fontsize=7, alpha=0.8)
+            # If we see another RB, print their info
+            if row.get('Position') == 'RB':
+                print(f"Other RB found: {row['DisplayName']} (ID: {row['NflId']}, Position: {row['Position']})")
+        
+        ax.text(row['X'] + 0.5, row['Y'] + 0.5, f"{row['DisplayName']} ({row['Position']})", fontsize=7, alpha=0.8)
 
     # Scoreboard / title
     # Draw a rounded scoreboard box at top-center of the axes
@@ -97,22 +156,68 @@ def plot_frame(ax, players, title, show_yards=False):
                 fontsize=10, fontweight='bold', bbox=dict(facecolor='yellow', alpha=0.3, edgecolor=None, pad=3))
 
     # Frame title and labels
-    time_label = players['TimeSnap'].iloc[0] if len(players) > 0 else 'N/A'
-    ax.set_title(f"{title}\nTime: {time_label}")
+    time_str = players['TimeSnap'].iloc[0] if len(players) > 0 else 'N/A'
+    # Convert UTC timestamp to more readable format
+    try:
+        time_obj = pd.to_datetime(time_str)
+        game_clock = players['GameClock'].iloc[0] if len(players) > 0 else 'N/A'
+        quarter = players['Quarter'].iloc[0] if len(players) > 0 else 'N/A'
+        time_label = f"Quarter: {quarter}  |  Game Clock: {game_clock}"
+    except:
+        time_label = "Time not available"
+    
+    ax.set_title(f"{title}\n{time_label}")
     ax.set_xlabel('Field X (yards)')
     ax.set_ylabel('Field Y (yards)')
     ax.grid(True, linestyle='--', alpha=0.3)
 
 
-# Create a single plot for the end of play (tackle)
+# Let the user choose which play to view
+print("\nAvailable plays:")
+play_summaries = []
+for idx, (_, play_info) in enumerate(unique_plays.iterrows(), 1):
+    # try to find rusher name
+    rusher_id = play_info['NflIdRusher']
+    play_id = play_info['PlayId']
+    rrows = game_plays[(game_plays['PlayId'] == play_id) & (game_plays['NflId'] == rusher_id)]
+    rusher_name = rrows['DisplayName'].iloc[0] if not rrows.empty else 'Unknown'
+    yards = play_info['Yards']
+    play_summaries.append((play_id, rusher_name, yards))
+    print(f"{idx}. PlayId: {play_id} - Rusher: {rusher_name} - Yards: {yards}")
+
+selected = None
+while selected is None:
+    try:
+        choice = int(input(f"\nEnter play number to view (1-{total_plays}): "))
+        if 1 <= choice <= total_plays:
+            selected = choice
+        else:
+            print(f"Please enter a number between 1 and {total_plays}.")
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+
+# Show the selected play
+sel_play = play_summaries[selected - 1]
+play_id = sel_play[0]
+rusher_name = sel_play[1]
+yards_gained = sel_play[2]
+
+play_rows = game_plays[game_plays['PlayId'] == play_id].copy()
+play_rows['TimeSnap_dt'] = pd.to_datetime(play_rows['TimeSnap'], errors='coerce')
+start_time = play_rows['TimeSnap_dt'].min()
+end_time = play_rows['TimeSnap_dt'].max()
+end_frame_players = play_rows[play_rows['TimeSnap_dt'] == end_time]
+
+# Create plot for the selected play
 fig, ax = plt.subplots(1, 1, figsize=(12, 7))
-plot_frame(ax, end_frame_players, 'End of Play (Tackle)', show_yards=True)
+play_title = f'Play {selected}/{total_plays} - End of Play'
+plot_frame(ax, end_frame_players, play_title, show_yards=True)
 
 # Legend (use team abbreviations)
 legend_elements = [
     Line2D([0], [0], marker='o', color='w', label=f'{home_abbr} (Red)', markerfacecolor='red', markersize=10, markeredgecolor='black'),
     Line2D([0], [0], marker='o', color='w', label=f'{vis_abbr} (Green)', markerfacecolor='green', markersize=10, markeredgecolor='black'),
-    Line2D([0], [0], marker='D', color='w', label='Runningback', markerfacecolor='#4fc3f7', markersize=12, markeredgecolor='black'),
+    Line2D([0], [0], marker='D', color='w', label=f'Rusher: {rusher_name}', markerfacecolor='#4fc3f7', markersize=12, markeredgecolor='black'),
     mpatches.Patch(color='lightblue', alpha=0.3, label='End Zone'),
     mpatches.Patch(color='#d0f5d8', alpha=1, label='Field (Grass)')
 ]
