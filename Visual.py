@@ -46,50 +46,15 @@ unique_plays = game_plays[['PlayId', 'NflIdRusher', 'Yards']].drop_duplicates()
 total_plays = len(unique_plays)
 print(f"\nFound {total_plays} plays in this game.")
 
-# Process each play in the game
-for play_idx, (_, play_info) in enumerate(unique_plays.iterrows(), 1):
-    play_id = play_info['PlayId']
-    
-    # Get all player positions for this play
-    play_rows = game_plays[game_plays['PlayId'] == play_id].copy()
-    
-    # Convert TimeSnap to datetime for ordering
-    play_rows['TimeSnap_dt'] = pd.to_datetime(play_rows['TimeSnap'], errors='coerce')
-    
-    # Get rusher's name
-    rusher_info = play_rows[play_rows['NflId'] == play_info['NflIdRusher']].iloc[0]
-    rusher_name = rusher_info['DisplayName']
-    yards_gained = play_info['Yards']
-    
-    print(f"\nPlay {play_idx}/{total_plays}")
-    print(f"Rusher: {rusher_name}")
-    print(f"Yards gained: {yards_gained}")
+# Extract initial frame information
+game_play_data = df[df['GameId'] == game_id].copy()
+initial_play_info = game_play_data.iloc[0]
 
-# Attempt to find rusher's frames (most accurate for end of play)
-rusher_id = frame.get('NflIdRusher', None)
-if pd.notna(rusher_id):
-    rusher_rows = play_rows[play_rows['NflId'] == rusher_id].copy()
-    if not rusher_rows.empty:
-        rusher_rows['TimeSnap_dt'] = pd.to_datetime(rusher_rows['TimeSnap'], errors='coerce')
-        start_time = rusher_rows['TimeSnap_dt'].min()
-        end_time = rusher_rows['TimeSnap_dt'].max()
-    else:
-        # fallback to full-play times
-        start_time = play_rows['TimeSnap_dt'].min()
-        end_time = play_rows['TimeSnap_dt'].max()
-else:
-    start_time = play_rows['TimeSnap_dt'].min()
-    end_time = play_rows['TimeSnap_dt'].max()
-
-start_frame_players = play_rows[play_rows['TimeSnap_dt'] == start_time]
-end_frame_players = play_rows[play_rows['TimeSnap_dt'] == end_time]
-
-# Extract team abbreviations and scores from the frame
-home_abbr = frame['HomeTeamAbbr']
-vis_abbr = frame['VisitorTeamAbbr']
-home_score = frame['HomeScoreBeforePlay']
-vis_score = frame['VisitorScoreBeforePlay']
-yards_gained = frame['Yards']
+# Extract team abbreviations and scores from the initial frame
+home_abbr = initial_play_info['HomeTeamAbbr']
+vis_abbr = initial_play_info['VisitorTeamAbbr']
+home_score = initial_play_info['HomeScoreBeforePlay']
+vis_score = initial_play_info['VisitorScoreBeforePlay']
 
 # Map 'home'/'away' to actual abbreviations
 team_abbr_by_side = {'home': home_abbr, 'away': vis_abbr}
@@ -210,7 +175,7 @@ end_frame_players = play_rows[play_rows['TimeSnap_dt'] == end_time]
 
 # Create plot for the selected play
 fig, ax = plt.subplots(1, 1, figsize=(12, 7))
-play_title = f'Play {selected}/{total_plays} - End of Play'
+play_title = f'Play {selected}/{total_plays} - Start of Play'
 plot_frame(ax, end_frame_players, play_title, show_yards=True)
 
 # Legend (use team abbreviations)
