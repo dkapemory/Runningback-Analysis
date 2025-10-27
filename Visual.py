@@ -1,22 +1,11 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-
-# Load the CSV (use a chunk if file is huge)
-df = pd.read_csv('train.csv')
-
-# Choose a specific frame (example: first frame in file)
-frame = df.iloc[0]
-game_id = frame['GameId']
-play_id = frame['PlayId']
-timestamp = frame['TimeHandoff']
-import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
 
-# Load the CSV (use a chunk if file is huge)
-df = pd.read_csv('train.csv')
+# Load the CSV with low_memory=False to handle mixed types
+df = pd.read_csv('train.csv', low_memory=False)
 
 # Choose a specific play by taking the first row's play (you can change this selection)
 frame = df.iloc[0]
@@ -95,16 +84,17 @@ def plot_frame(ax, players, title, show_yards=False):
     right_x = 0.5 + box_width/2 - 0.02
 
     # Home badge (left)
-    ax.text(left_x, 1.02 + box_height/2, f"{home_abbr}", transform=ax.transAxes, ha='left', va='center', fontsize=10, fontweight='bold', color=team_color_by_abbr.get(home_abbr, 'black'))
-    ax.text(left_x + 0.08, 1.02 + box_height/2, f"{home_score}", transform=ax.transAxes, ha='left', va='center', fontsize=10)
+    ax.text(left_x, 1.02 + 2*box_height/3, f"{home_abbr}", transform=ax.transAxes, ha='left', va='center', fontsize=10, fontweight='bold', color=team_color_by_abbr.get(home_abbr, 'black'))
+    ax.text(left_x + 0.08, 1.02 + 2*box_height/3, f"{home_score}", transform=ax.transAxes, ha='left', va='center', fontsize=10)
 
     # Visitor badge (right)
-    ax.text(right_x - 0.12, 1.02 + box_height/2, f"{vis_score}", transform=ax.transAxes, ha='right', va='center', fontsize=10)
-    ax.text(right_x, 1.02 + box_height/2, f"{vis_abbr}", transform=ax.transAxes, ha='right', va='center', fontsize=10, fontweight='bold', color=team_color_by_abbr.get(vis_abbr, 'black'))
+    ax.text(right_x - 0.12, 1.02 + 2*box_height/3, f"{vis_score}", transform=ax.transAxes, ha='right', va='center', fontsize=10)
+    ax.text(right_x, 1.02 + 2*box_height/3, f"{vis_abbr}", transform=ax.transAxes, ha='right', va='center', fontsize=10, fontweight='bold', color=team_color_by_abbr.get(vis_abbr, 'black'))
 
     # Yards info in center if requested
     if show_yards:
-        ax.text(mid_x, 1.02 + box_height/2, f"Yards: {yards_gained}", transform=ax.transAxes, ha='center', va='center', fontsize=10)
+        ax.text(mid_x, 1.02 + box_height*0.7, f"Yards Gained: {yards_gained}", transform=ax.transAxes, ha='center', va='center', 
+                fontsize=10, fontweight='bold', bbox=dict(facecolor='yellow', alpha=0.3, edgecolor=None, pad=3))
 
     # Frame title and labels
     time_label = players['TimeSnap'].iloc[0] if len(players) > 0 else 'N/A'
