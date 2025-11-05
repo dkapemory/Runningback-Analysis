@@ -1,2 +1,4 @@
 .DS_Store
 train.csv
+.png
+.condensed_train.csv
