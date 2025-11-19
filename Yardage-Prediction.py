@@ -8,10 +8,15 @@ import seaborn as sns
 import numpy as np
 from sklearn import metrics
 import pandas as pd
+import re
+import os
 
 # Load the condensed training data with low_memory=False to handle mixed types
 print("Loading data...")
 condensed_train = pd.read_csv('condensed_train.csv', low_memory=False)
+
+# Use the provided `condensed_train.csv` directly; compute closest defenders on the fly
+computed_closest = False
 
 # Select relevant features
 # Basic play context features
@@ -36,30 +41,89 @@ feature_cols = play_features + player_cols
 
 # Prepare features and target
 print("Preparing features...")
+
+# Precompute which defender indices exist in the DataFrame (e.g. Def1_X, Def2_X, ...)
+def_indices = []
+for c in condensed_train.columns:
+    m = re.match(r"Def(\d+)_X$", c)
+    if m:
+        def_indices.append(int(m.group(1)))
+def_indices = sorted(def_indices)
+
+# Build feature name list (uses "ClosestDefN" slots based on proximity)
+feature_names = []
+for col in play_features:
+    feature_names.append(col)
+for p in pos_cols:
+    feature_names.append('Rush1' + p)
+for slot in range(1, 6):
+    for p in pos_cols:
+        feature_names.append(f'ClosestDef{slot}_{p}')
+    for rel in ['X_Dist', 'Y_Dist', 'S_Diff', 'A_Diff']:
+        feature_names.append(f'Rush_ClosestDef{slot}_{rel}')
+
+# We'll compute closest defenders on the fly when constructing features below.
+# This script will use the already-created `condensed_train.csv` and will not
+# create or write a separate `condensed_train_with_closest.csv` file.
 feature_data = []
 for _, row in condensed_train.iterrows():
     features = []
     # Add play features
     for col in play_features:
-        features.append(row[col])
-    
-    # Add rusher features
-    for col in ['Rush1' + p for p in pos_cols]:
-        features.append(row[col])
-    
-    # Add defender features and calculate relative metrics
-    for i in range(5):
-        def_prefix = f'Def{i+1}'
-        # Add basic defender metrics
-        for p in pos_cols:
-            features.append(row[def_prefix + p])
-        
-        # Add relative position metrics
-        features.append(abs(row['Rush1_X'] - row[def_prefix + '_X']))  # X distance
-        features.append(abs(row['Rush1_Y'] - row[def_prefix + '_Y']))  # Y distance
-        features.append(row['Rush1_S'] - row[def_prefix + '_S'])       # Speed difference
-        features.append(row['Rush1_A'] - row[def_prefix + '_A'])       # Acceleration difference
-        
+        features.append(row.get(col, np.nan))
+
+    # Rusher features - for X/Y use the canonical 'X'/'Y' columns as base, otherwise prefer Rush1_* then fallback
+    for p in pos_cols:
+        if p == '_X':
+            features.append(row.get('X', row.get('Rush1_X', np.nan)))
+        elif p == '_Y':
+            features.append(row.get('Y', row.get('Rush1_Y', np.nan)))
+        else:
+            features.append(row.get('Rush1' + p, row.get(p.strip('_'), np.nan)))
+
+    # Compute distances to all defender indices and pick 5 closest
+    distances = []
+    # Use canonical X/Y columns as the rusher base coordinates for distance computation
+    rush_x = row.get('X', row.get('Rush1_X', np.nan))
+    rush_y = row.get('Y', row.get('Rush1_Y', np.nan))
+    for idx in def_indices:
+        dx = row.get(f'Def{idx}_X', np.nan)
+        dy = row.get(f'Def{idx}_Y', np.nan)
+        try:
+            dist = np.sqrt((rush_x - dx) ** 2 + (rush_y - dy) ** 2)
+        except Exception:
+            dist = np.nan
+        distances.append((idx, dist))
+
+    # Filter out defenders with NaN distances and sort
+    distances = [d for d in distances if not pd.isna(d[1])]
+    distances.sort(key=lambda x: x[1])
+    closest = [idx for idx, _ in distances[:5]]
+
+    # For each closest-defender slot, append defender metrics and relative metrics
+    for slot in range(5):
+        if slot < len(closest):
+            didx = closest[slot]
+            for p in pos_cols:
+                # p includes leading underscore; use Def{didx}{p} to match column names like 'Def1_X'
+                features.append(row.get(f'Def{didx}{p}', np.nan))
+            # relative metrics
+            dx = row.get(f'Def{didx}_X', np.nan)
+            dy = row.get(f'Def{didx}_Y', np.nan)
+            ds = row.get(f'Def{didx}_S', np.nan)
+            da = row.get(f'Def{didx}_A', np.nan)
+            # distances and diffs
+            features.append(abs(rush_x - dx) if not pd.isna(rush_x) and not pd.isna(dx) else np.nan)
+            features.append(abs(rush_y - dy) if not pd.isna(rush_y) and not pd.isna(dy) else np.nan)
+            features.append((row.get('Rush1_S', np.nan) - ds) if not pd.isna(row.get('Rush1_S', np.nan)) and not pd.isna(ds) else np.nan)
+            features.append((row.get('Rush1_A', np.nan) - da) if not pd.isna(row.get('Rush1_A', np.nan)) and not pd.isna(da) else np.nan)
+        else:
+            # pad with NaNs when fewer than 5 defenders present
+            for _ in pos_cols:
+                features.append(np.nan)
+            for _ in range(4):
+                features.append(np.nan)
+
     feature_data.append(features)
 
 # Convert to numpy array
@@ -108,13 +172,19 @@ plt.tight_layout()
 plt.savefig('yards_prediction_results.png')
 plt.close()
 
-# Create feature names for importance plot
-all_feature_names = (
-    play_features +
-    ['Rush1' + p for p in pos_cols] +
-    [f'{def_prefix}{p}' for i in range(5) for def_prefix in [f'Def{i+1}_'] for p in pos_cols] +
-    [f'Rush_Def{i+1}_{m}' for i in range(5) for m in ['X_Dist', 'Y_Dist', 'S_Diff', 'A_Diff']]
-)
+# Build accurate feature names that match the order used to construct X
+all_feature_names = []
+# play features
+all_feature_names.extend(play_features)
+# rusher features (keep Rush1_<p> naming for consistency)
+for p in pos_cols:
+    all_feature_names.append('Rush1' + p)
+# closest defender slots: defender raw metrics then relative metrics
+for slot in range(1, 6):
+    for p in pos_cols:
+        all_feature_names.append(f'Closest_Def{slot}_{p.strip("_")}')
+    for rel in ['X_Dist', 'Y_Dist', 'S_Diff', 'A_Diff']:
+        all_feature_names.append(f'Rush_ClosestDef{slot}_{rel}')
 
 # Get feature importance
 feature_importance = pd.DataFrame({

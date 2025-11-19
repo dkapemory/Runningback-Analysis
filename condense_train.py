@@ -26,6 +26,8 @@ def condense(csv_path, out_path, chunksize=500_000, max_plays=None):
     
     # Player-specific columns we'll replicate
     player_cols = ['DisplayName', 'Position', 'PlayerWeight', 'PlayerHeight', 'PlayerBirthDate', 'PlayerCollegeName'] + pos_cols
+    # we'll also add a distance from the rusher for each player
+    player_cols = player_cols + ['DistFromRusher']
     reader = pd.read_csv(csv_path, chunksize=chunksize, low_memory=False)
     earliest_frames = {}  # PlayId -> (timestamp, full frame DataFrame)
     chunks = 0
@@ -69,10 +71,34 @@ def condense(csv_path, out_path, chunksize=500_000, max_plays=None):
         # Get rusher's row and team
         rusher_row = frame[frame['NflId'] == frame['NflIdRusher'].iloc[0]].iloc[0]
         rusher_team = rusher_row['Team']
-        
+
         # Split players into rusher's team and opposing team
-        rush_team_rows = frame[frame['Team'] == rusher_team]
-        def_team_rows = frame[frame['Team'] != rusher_team]
+        rush_team_rows = frame[frame['Team'] == rusher_team].copy()
+        def_team_rows = frame[frame['Team'] != rusher_team].copy()
+
+        # Compute distance from rusher (use canonical X/Y columns) and sort each team by proximity
+        try:
+            rusher_x = float(rusher_row['X'])
+            rusher_y = float(rusher_row['Y'])
+        except Exception:
+            # fallback to NaNs if missing
+            rusher_x = None
+            rusher_y = None
+
+        def compute_dist(df):
+            if rusher_x is None or rusher_y is None:
+                df['DistFromRusher'] = float('nan')
+            else:
+                # ensure numeric operations
+                df['X'] = pd.to_numeric(df['X'], errors='coerce')
+                df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
+                df['DistFromRusher'] = ((df['X'] - rusher_x) ** 2 + (df['Y'] - rusher_y) ** 2) ** 0.5
+            return df
+
+        rush_team_rows = compute_dist(rush_team_rows).sort_values('DistFromRusher')
+        # Exclude the rusher himself from the Rush slots (rusher data is the base row)
+        rush_team_rows = rush_team_rows[rush_team_rows['NflId'] != rusher_row['NflId']]
+        def_team_rows = compute_dist(def_team_rows).sort_values('DistFromRusher')
         
         # Start with the rusher's row as base (for play-level info)
         play_dict = rusher_row.to_dict()
@@ -83,11 +109,7 @@ def condense(csv_path, out_path, chunksize=500_000, max_plays=None):
             for col in player_cols:
                 play_dict[prefix + col] = getattr(p, col)
         
-        # Fill any missing rushing team positions with NaN (up to 11 players)
-        for idx in range(len(rush_team_rows) + 1, 12):
-            prefix = f'Rush{idx}_'
-            for col in player_cols:
-                play_dict[prefix + col] = None
+        # Do not pre-create empty Rush slots; only include actual teammates present
         
         # Add position data for each player on defense team
         for idx, p in enumerate(def_team_rows.itertuples(), 1):
@@ -95,11 +117,7 @@ def condense(csv_path, out_path, chunksize=500_000, max_plays=None):
             for col in player_cols:
                 play_dict[prefix + col] = getattr(p, col)
         
-        # Fill any missing defense positions with NaN (up to 11 players)
-        for idx in range(len(def_team_rows) + 1, 12):
-            prefix = f'Def{idx}_'
-            for col in player_cols:
-                play_dict[prefix + col] = None
+        # Do not pre-create empty Def slots; only include actual defenders present
         
         condensed_rows.append(play_dict)
 
