@@ -60,13 +60,9 @@ for slot in range(1, 6):
         all_feature_names.append(rel_tpl.format(slot))
 
 feature_data = []
-# If the user removed some columns from the cleaned CSV, drop them from the
-# extraction list so we don't create all-NaN features and trigger imputer warnings.
-available_feature_names = [c for c in all_feature_names if c in condensed_train.columns]
-missing_cols = [c for c in all_feature_names if c not in condensed_train.columns]
-if missing_cols:
-    print(f"Note: the following expected feature columns are missing and will be skipped: {missing_cols}")
-    all_feature_names = available_feature_names
+# Only keep features that actually exist in the cleaned CSV. Do this silently
+# so we don't complain about user-removed columns.
+all_feature_names = [c for c in all_feature_names if c in condensed_train.columns]
 
 for _, row in condensed_train.iterrows():
     features = [row.get(c, np.nan) for c in all_feature_names]
